@@ -1,2 +1,6 @@
-def main() -> None:
-    print("daat-locus-benchmarks")
+"""Daat Locus benchmark runner."""
+
+from .cli import main
+
+__all__ = ["main"]
+__version__ = "0.1.0"
