@@ -137,9 +137,7 @@ class BenchmarkRunner:
 
         prompt_text = _render_prompt(
             task,
-            workspace_dir=workspace_dir or task_dir,
-            task_dir=task_dir,
-            patch_path=patch_path,
+            repository_path=workspace_dir or task_dir,
         )
         prompt_path.write_text(prompt_text, encoding="utf-8")
 
@@ -258,23 +256,14 @@ class BenchmarkRunner:
 def _render_prompt(
     task: BenchmarkTask,
     *,
-    workspace_dir: Path,
-    task_dir: Path,
-    patch_path: Path,
+    repository_path: Path,
 ) -> str:
     parts = [
-        f"# Benchmark task: {task.id}",
+        f"# Task: {task.id}",
         "",
-        f"Repository: {task.repo or 'unspecified'}",
-        f"Base commit: {task.base_commit or 'unspecified'}",
+        f"Repository Path: {repository_path}",
         "",
-        "## Runner context",
-        "",
-        f"Agent workspace: {workspace_dir}",
-        f"Run artifact directory: {task_dir}",
-        f"Patch artifact path: {patch_path}",
-        "",
-        "Modify files inside the agent workspace only. Do not commit changes; the benchmark runner will collect git diff --binary after you finish.",
+        "Open this project and fix this problem, do not commit.",
         "",
         "## Problem statement",
         "",
