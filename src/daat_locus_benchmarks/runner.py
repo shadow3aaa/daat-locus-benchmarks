@@ -9,7 +9,9 @@ from pathlib import Path
 from typing import Iterable, Sequence
 
 from .models import BenchmarkTask, RunSummary, TaskRunResult
+from .predictions import Prediction, prediction_from_patch, write_predictions
 from .reporting import write_json, write_jsonl
+from .workspace import WorkspaceError, collect_patch, prepare_workspace
 
 
 Command = str | Sequence[str]
@@ -26,21 +28,47 @@ class BenchmarkRunner:
         agent_command: Command | None = None,
         dry_run: bool = False,
         timeout_seconds: float = 3600.0,
+        prepare_workspaces: bool = False,
+        workspace_root: Path | None = None,
+        repo_cache: Path | None = None,
+        predictions_path: Path | None = None,
+        model_name: str = "daat-locus",
     ) -> None:
         self.suite = suite
         self.output_dir = output_dir
         self.agent_command = agent_command
         self.dry_run = dry_run
         self.timeout_seconds = timeout_seconds
+        self.prepare_workspaces = prepare_workspaces
+        self.workspace_root = workspace_root
+        self.repo_cache = repo_cache
+        self.predictions_path = predictions_path
+        self.model_name = model_name
 
     def run(self, tasks: Iterable[BenchmarkTask]) -> RunSummary:
         task_list = list(tasks)
         started_at = _utc_now()
         run_id = _run_id(started_at)
-        run_root = self.output_dir / run_id
+        run_root = (self.output_dir / run_id).resolve()
         run_root.mkdir(parents=True, exist_ok=False)
 
-        results = [self.run_task(task, index, run_root) for index, task in enumerate(task_list, start=1)]
+        workspaces_root = (self.workspace_root or run_root / "workspaces").resolve()
+        results: list[TaskRunResult] = []
+        predictions: list[Prediction] = []
+        for index, task in enumerate(task_list, start=1):
+            result, prediction = self.run_task(task, index, run_root, workspaces_root)
+            results.append(result)
+            if prediction is not None:
+                predictions.append(prediction)
+
+        final_predictions_path: Path | None = None
+        if self.predictions_path is not None:
+            final_predictions_path = self.predictions_path.resolve()
+        elif predictions:
+            final_predictions_path = run_root / "predictions.jsonl"
+        if final_predictions_path is not None:
+            write_predictions(final_predictions_path, predictions)
+
         finished_at = _utc_now()
         summary = RunSummary(
             run_id=run_id,
@@ -49,12 +77,19 @@ class BenchmarkRunner:
             started_at=_isoformat(started_at),
             finished_at=_isoformat(finished_at),
             results=results,
+            predictions_path=str(final_predictions_path) if final_predictions_path is not None else None,
         )
         write_json(run_root / "summary.json", summary.to_dict())
         write_jsonl(run_root / "results.jsonl", (result.to_dict() for result in results))
         return summary
 
-    def run_task(self, task: BenchmarkTask, index: int, run_root: Path) -> TaskRunResult:
+    def run_task(
+        self,
+        task: BenchmarkTask,
+        index: int,
+        run_root: Path,
+        workspaces_root: Path,
+    ) -> tuple[TaskRunResult, Prediction | None]:
         task_dir = run_root / f"{index:04d}-{_slug(task.id)}"
         task_dir.mkdir(parents=True, exist_ok=False)
 
@@ -67,22 +102,52 @@ class BenchmarkRunner:
         prompt_path.write_text(_render_prompt(task), encoding="utf-8")
 
         command = [] if self.agent_command is None else _normalize_command(self.agent_command)
+        workspace_dir: Path | None = None
+        patch_path = task_dir / "model.patch"
         started_at = _utc_now()
+
+        if self.prepare_workspaces:
+            try:
+                workspace_dir = prepare_workspace(task, workspaces_root, repo_cache=self.repo_cache)
+            except WorkspaceError as exc:
+                stdout_path.write_text("", encoding="utf-8")
+                stderr_path.write_text(f"{type(exc).__name__}: {exc}\n", encoding="utf-8")
+                finished_at = _utc_now()
+                return (
+                    TaskRunResult(
+                        task_id=task.id,
+                        status="error",
+                        run_dir=str(task_dir),
+                        command=command,
+                        started_at=_isoformat(started_at),
+                        finished_at=_isoformat(finished_at),
+                        duration_seconds=_elapsed(started_at, finished_at),
+                        stdout_path=str(stdout_path),
+                        stderr_path=str(stderr_path),
+                        workspace_dir=str(workspace_dir) if workspace_dir is not None else None,
+                        error=str(exc),
+                    ),
+                    None,
+                )
 
         if self.dry_run:
             stdout_path.write_text("", encoding="utf-8")
             stderr_path.write_text("", encoding="utf-8")
             finished_at = _utc_now()
-            return TaskRunResult(
-                task_id=task.id,
-                status="planned",
-                run_dir=str(task_dir),
-                command=command,
-                started_at=_isoformat(started_at),
-                finished_at=_isoformat(finished_at),
-                duration_seconds=_elapsed(started_at, finished_at),
-                stdout_path=str(stdout_path),
-                stderr_path=str(stderr_path),
+            return (
+                TaskRunResult(
+                    task_id=task.id,
+                    status="planned",
+                    run_dir=str(task_dir),
+                    command=command,
+                    started_at=_isoformat(started_at),
+                    finished_at=_isoformat(finished_at),
+                    duration_seconds=_elapsed(started_at, finished_at),
+                    stdout_path=str(stdout_path),
+                    stderr_path=str(stderr_path),
+                    workspace_dir=str(workspace_dir) if workspace_dir is not None else None,
+                ),
+                None,
             )
 
         if not command:
@@ -98,6 +163,8 @@ class BenchmarkRunner:
                 "DAAT_BENCHMARK_PROMPT": str(prompt_path),
                 "DAAT_BENCHMARK_TASK_JSON": str(task_json),
                 "DAAT_BENCHMARK_OUTPUT_DIR": str(task_dir),
+                "DAAT_BENCHMARK_WORKSPACE": str(workspace_dir or task_dir),
+                "DAAT_BENCHMARK_PATCH_PATH": str(patch_path),
                 "DAAT_BENCHMARK_PROBLEM_STATEMENT": task.problem_statement,
             }
         )
@@ -107,7 +174,7 @@ class BenchmarkRunner:
         try:
             completed = subprocess.run(
                 command,
-                cwd=task_dir,
+                cwd=workspace_dir or task_dir,
                 env=env,
                 text=True,
                 capture_output=True,
@@ -133,19 +200,37 @@ class BenchmarkRunner:
 
         stdout_path.write_text(stdout, encoding="utf-8")
         stderr_path.write_text(stderr, encoding="utf-8")
+        prediction: Prediction | None = None
+        patch_bytes: int | None = None
+        if workspace_dir is not None and status == "passed":
+            try:
+                patch = collect_patch(workspace_dir)
+                patch_path.write_text(patch, encoding="utf-8")
+                patch_bytes = len(patch.encode("utf-8"))
+                prediction = prediction_from_patch(task, patch, model_name=self.model_name)
+            except WorkspaceError as exc:
+                status = "error"
+                error = str(exc)
+                stderr_path.write_text(stderr + f"\n{type(exc).__name__}: {exc}\n", encoding="utf-8")
         finished_at = _utc_now()
-        return TaskRunResult(
-            task_id=task.id,
-            status=status,
-            run_dir=str(task_dir),
-            command=command,
-            started_at=_isoformat(started_at),
-            finished_at=_isoformat(finished_at),
-            duration_seconds=_elapsed(started_at, finished_at),
-            return_code=return_code,
-            stdout_path=str(stdout_path),
-            stderr_path=str(stderr_path),
-            error=error,
+        return (
+            TaskRunResult(
+                task_id=task.id,
+                status=status,
+                run_dir=str(task_dir),
+                command=command,
+                started_at=_isoformat(started_at),
+                finished_at=_isoformat(finished_at),
+                duration_seconds=_elapsed(started_at, finished_at),
+                return_code=return_code,
+                stdout_path=str(stdout_path),
+                stderr_path=str(stderr_path),
+                workspace_dir=str(workspace_dir) if workspace_dir is not None else None,
+                patch_path=str(patch_path) if patch_bytes is not None else None,
+                patch_bytes=patch_bytes,
+                error=error,
+            ),
+            prediction,
         )
 
 

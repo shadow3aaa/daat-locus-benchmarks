@@ -78,6 +78,9 @@ class TaskRunResult:
     return_code: int | None = None
     stdout_path: str | None = None
     stderr_path: str | None = None
+    workspace_dir: str | None = None
+    patch_path: str | None = None
+    patch_bytes: int | None = None
     error: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -92,6 +95,7 @@ class RunSummary:
     started_at: str
     finished_at: str
     results: list[TaskRunResult]
+    predictions_path: str | None = None
 
     @property
     def total(self) -> int:
@@ -127,6 +131,7 @@ class RunSummary:
             "output_dir": self.output_dir,
             "started_at": self.started_at,
             "finished_at": self.finished_at,
+            "predictions_path": self.predictions_path,
             "total": self.total,
             "passed": self.passed,
             "failed": self.failed,

@@ -9,3 +9,5 @@ __pycache__/
 # Benchmark outputs
 runs/
 reports/tmp/
+predictions/*.jsonl
+workspaces/
