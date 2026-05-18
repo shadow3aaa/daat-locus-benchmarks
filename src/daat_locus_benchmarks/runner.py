@@ -281,8 +281,6 @@ def _render_prompt(
         task.problem_statement.rstrip() or "(empty)",
         "",
     ]
-    if task.expected_patch:
-        parts.extend(["## Reference patch", "", task.expected_patch.rstrip(), ""])
     return "\n".join(parts)
 
 

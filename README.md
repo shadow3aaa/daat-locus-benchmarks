@@ -10,8 +10,8 @@ style task files without introducing shell-script runner glue.
 
 - Pure Python CLI, installed as `daat-locus-benchmarks`.
 - Built-in `local-smoke` suite for validating runner plumbing.
-- `swebench-lite` and `swebench-verified` suite names that accept local JSON or
-  JSONL task exports.
+- `swebench-lite` and `swebench-verified` suite names that can fetch task rows
+  from Hugging Face or accept local JSON/JSONL exports.
 - Optional SWE-bench workspace mode that clones each task repo at
   `base_commit`, runs the agent inside that checkout, collects `git diff
   --binary`, and writes official `predictions.jsonl` rows.
@@ -45,7 +45,17 @@ uv run daat-locus-benchmarks run \
 ## Run a SWE-bench style task file
 
 Prepare a `.jsonl` file with fields such as `instance_id`, `repo`,
-`base_commit`, `problem_statement`, and optionally `patch` or `test_patch`.
+`base_commit`, and `problem_statement`. Gold `patch` and `test_patch` columns
+are ignored by task loading/export and are never included in prompts.
+
+You can also export the first rows directly from Hugging Face:
+
+```bash
+uv run daat-locus-benchmarks export-tasks \
+  --suite swebench-lite \
+  --limit 5 \
+  --output data/swebench_lite.jsonl
+```
 
 ```bash
 uv run daat-locus-benchmarks run \
@@ -85,14 +95,23 @@ SWE-bench instance
   -> call official swebench.harness.run_evaluation
 ```
 
-For a small Lite smoke, first export or create a JSONL file with real
-SWE-bench Lite fields such as `instance_id`, `repo`, `base_commit`, and
-`problem_statement`, then limit it to a few tasks:
+For a small Lite smoke, either run directly from the Hugging Face rows API or
+first export a JSONL file. A dry-run check that fetches one Lite row and renders
+prompt/report artifacts without running an agent looks like this:
 
 ```bash
 uv run daat-locus-benchmarks run \
   --suite swebench-lite \
-  --tasks data/swebench_lite.jsonl \
+  --limit 1 \
+  --output-dir runs/lite-dry-run \
+  --dry-run
+```
+
+To run Daat Locus on a few real Lite instances and produce harness predictions:
+
+```bash
+uv run daat-locus-benchmarks run \
+  --suite swebench-lite \
   --limit 3 \
   --prepare-workspaces \
   --workspace-root workspaces/lite-smoke \

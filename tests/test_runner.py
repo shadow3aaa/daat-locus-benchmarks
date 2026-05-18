@@ -94,13 +94,17 @@ class BenchmarkRunnerTests(unittest.TestCase):
                 daat_locus_binary=sys.executable,
             )
             with mock.patch.object(runner, "_agent_command", return_value=command):
-                summary = runner.run([BenchmarkTask(id="task-send", problem_statement="fix via send")])
+                summary = runner.run(
+                    [BenchmarkTask(id="task-send", problem_statement="fix via send", expected_patch="secret patch")]
+                )
 
             self.assertEqual(summary.passed, 1)
             task_dir = Path(summary.results[0].run_dir)
             sent_prompt = (task_dir / "agent.txt").read_text(encoding="utf-8")
             self.assertIn("# Benchmark task: task-send", sent_prompt)
             self.assertIn("fix via send", sent_prompt)
+            self.assertNotIn("secret patch", sent_prompt)
+            self.assertNotIn("Reference patch", sent_prompt)
             self.assertEqual((task_dir / "stdout.txt").read_text(encoding="utf-8").strip(), "reply")
 
 

@@ -42,8 +42,10 @@ class BenchmarkTask:
             "problem_statement",
             "prompt",
             "issue",
+            "expected_patch",
             "patch",
             "test_patch",
+            "metadata",
         }
         task_id = _optional_str(data.get("id")) or _optional_str(data.get("instance_id")) or default_id
         problem_statement = (
@@ -51,8 +53,9 @@ class BenchmarkTask:
             or _required_text(data.get("prompt"))
             or _required_text(data.get("issue"))
         )
-        expected_patch = _optional_str(data.get("patch")) or _optional_str(data.get("test_patch"))
-        metadata = {key: value for key, value in data.items() if key not in canonical_keys}
+        expected_patch = _optional_str(data.get("expected_patch"))
+        metadata = dict(data.get("metadata") or {}) if isinstance(data.get("metadata"), Mapping) else {}
+        metadata.update({key: value for key, value in data.items() if key not in canonical_keys})
         return cls(
             id=task_id,
             repo=_optional_str(data.get("repo")),

@@ -11,3 +11,4 @@ runs/
 reports/tmp/
 predictions/*.jsonl
 workspaces/
+tmp/

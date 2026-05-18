@@ -7,7 +7,7 @@ from typing import Sequence
 
 from .harness import build_harness_command, run_harness
 from .runner import BenchmarkRunner
-from .tasks import SUITES, TaskLoadError, list_suites, load_tasks
+from .tasks import SUITES, TaskLoadError, export_tasks, list_suites, load_tasks
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -19,9 +19,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("list-suites", help="List supported benchmark suites.")
 
+    export_parser = subparsers.add_parser("export-tasks", help="Export a supported dataset suite to local JSONL.")
+    export_parser.add_argument("--suite", choices=sorted(SUITES), default="swebench-lite", help="Benchmark suite name.")
+    export_parser.add_argument("--tasks", type=Path, help="Optional source JSON or JSONL task file/directory to normalize.")
+    export_parser.add_argument("--output", type=Path, required=True, help="Destination JSONL path.")
+    export_parser.add_argument("--limit", type=int, help="Maximum number of tasks to export.")
+
     run_parser = subparsers.add_parser("run", help="Run a benchmark suite or task file.")
     run_parser.add_argument("--suite", choices=sorted(SUITES), default="local-smoke", help="Benchmark suite name.")
-    run_parser.add_argument("--tasks", type=Path, help="JSON or JSONL task file/directory. Required for SWE-bench suites.")
+    run_parser.add_argument("--tasks", type=Path, help="JSON or JSONL task file/directory. Defaults to the suite's remote dataset when available.")
     run_parser.add_argument("--limit", type=int, help="Maximum number of tasks to run.")
     run_parser.add_argument("--output-dir", type=Path, default=Path("runs"), help="Directory for run artifacts.")
     run_parser.add_argument("--timeout", type=float, default=3600.0, help="Per-task timeout in seconds.")
@@ -73,6 +79,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "list-suites":
         _print_suites()
         return 0
+    if args.command == "export-tasks":
+        return _export_tasks(args)
     if args.command == "run":
         return _run(args)
     if args.command == "evaluate":
@@ -84,8 +92,20 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 def _print_suites() -> None:
     for suite in list_suites():
-        marker = "requires --tasks" if suite.requires_tasks_file else "built-in"
+        marker = "remote" if suite.remote_dataset else "requires --tasks" if suite.requires_tasks_file else "built-in"
         print(f"{suite.name:20} {marker:16} {suite.description}")
+
+
+def _export_tasks(args: argparse.Namespace) -> int:
+    try:
+        tasks = export_tasks(args.suite, args.output, tasks_path=args.tasks, limit=args.limit)
+    except TaskLoadError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    print(f"exported={len(tasks)}")
+    print(f"output={args.output}")
+    return 0
 
 
 def _run(args: argparse.Namespace) -> int:
