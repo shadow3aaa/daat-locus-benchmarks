@@ -20,6 +20,8 @@ style task files without introducing shell-script runner glue.
 - Per-task run directories containing `task.json`, `prompt.md`, `stdout.txt`,
   `stderr.txt`, optional `model.patch`, plus run-level `summary.json`,
   `results.jsonl`, and optional `predictions.jsonl`.
+- Built-in Daat Locus adapter using `daat-locus send --raw`; the benchmark
+  prompt is sent on stdin and the CLI waits for the daemon reply.
 - Agent commands are executed with `subprocess.run(..., shell=False)` and receive
   `DAAT_BENCHMARK_*` environment variables.
 
@@ -50,7 +52,7 @@ uv run daat-locus-benchmarks run \
   --suite swebench-lite \
   --tasks data/swebench_lite.jsonl \
   --limit 5 \
-  --agent-command "your-agent-command --non-interactive"
+  --use-daat-locus-send
 ```
 
 Each agent process receives:
@@ -95,16 +97,21 @@ uv run daat-locus-benchmarks run \
   --prepare-workspaces \
   --workspace-root workspaces/lite-smoke \
   --predictions-path predictions/lite-smoke.jsonl \
-  --agent-command "daat-locus --non-interactive"
+  --use-daat-locus-send
 ```
 
-The agent command is executed with `cwd=$DAAT_BENCHMARK_WORKSPACE`. After it
-exits successfully, the runner records `model.patch` from that checkout and
-writes rows like:
+With `--use-daat-locus-send`, the runner executes `daat-locus send --raw` with
+`cwd=$DAAT_BENCHMARK_WORKSPACE` and sends the rendered benchmark prompt on
+stdin. `daat-locus send` connects to the Daat Locus daemon, waits for the final
+reply, and exits. After it exits successfully, the runner records `model.patch`
+from that checkout and writes rows like:
 
 ```jsonl
 {"instance_id":"django__django-xxxxx","model_name_or_path":"daat-locus","model_patch":"diff --git ..."}
 ```
+
+Use `--agent-command` only when testing a custom adapter command. It is mutually
+exclusive with `--use-daat-locus-send`.
 
 Then run the official harness. The command below requires the official
 SWE-bench package and Docker environment to be installed separately:

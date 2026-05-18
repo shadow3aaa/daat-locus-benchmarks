@@ -33,7 +33,11 @@ class BenchmarkRunner:
         repo_cache: Path | None = None,
         predictions_path: Path | None = None,
         model_name: str = "daat-locus",
+        use_daat_locus_send: bool = False,
+        daat_locus_binary: str = "daat-locus",
     ) -> None:
+        if agent_command is not None and use_daat_locus_send:
+            raise ValueError("choose either agent_command or use_daat_locus_send, not both")
         self.suite = suite
         self.output_dir = output_dir
         self.agent_command = agent_command
@@ -44,6 +48,8 @@ class BenchmarkRunner:
         self.repo_cache = repo_cache
         self.predictions_path = predictions_path
         self.model_name = model_name
+        self.use_daat_locus_send = use_daat_locus_send
+        self.daat_locus_binary = daat_locus_binary
 
     def run(self, tasks: Iterable[BenchmarkTask]) -> RunSummary:
         task_list = list(tasks)
@@ -99,9 +105,8 @@ class BenchmarkRunner:
         stderr_path = task_dir / "stderr.txt"
 
         write_json(task_json, task.to_dict())
-        prompt_path.write_text(_render_prompt(task), encoding="utf-8")
 
-        command = [] if self.agent_command is None else _normalize_command(self.agent_command)
+        command = self._agent_command()
         workspace_dir: Path | None = None
         patch_path = task_dir / "model.patch"
         started_at = _utc_now()
@@ -130,6 +135,14 @@ class BenchmarkRunner:
                     None,
                 )
 
+        prompt_text = _render_prompt(
+            task,
+            workspace_dir=workspace_dir or task_dir,
+            task_dir=task_dir,
+            patch_path=patch_path,
+        )
+        prompt_path.write_text(prompt_text, encoding="utf-8")
+
         if self.dry_run:
             stdout_path.write_text("", encoding="utf-8")
             stderr_path.write_text("", encoding="utf-8")
@@ -151,7 +164,7 @@ class BenchmarkRunner:
             )
 
         if not command:
-            raise ValueError("agent_command is required unless dry_run is true")
+            raise ValueError("agent_command or use_daat_locus_send is required unless dry_run is true")
 
         env = os.environ.copy()
         env.update(
@@ -176,6 +189,7 @@ class BenchmarkRunner:
                 command,
                 cwd=workspace_dir or task_dir,
                 env=env,
+                input=prompt_text if self.use_daat_locus_send else None,
                 text=True,
                 capture_output=True,
                 timeout=self.timeout_seconds,
@@ -233,13 +247,34 @@ class BenchmarkRunner:
             prediction,
         )
 
+    def _agent_command(self) -> list[str]:
+        if self.use_daat_locus_send:
+            return [self.daat_locus_binary, "send", "--raw"]
+        if self.agent_command is None:
+            return []
+        return _normalize_command(self.agent_command)
 
-def _render_prompt(task: BenchmarkTask) -> str:
+
+def _render_prompt(
+    task: BenchmarkTask,
+    *,
+    workspace_dir: Path,
+    task_dir: Path,
+    patch_path: Path,
+) -> str:
     parts = [
         f"# Benchmark task: {task.id}",
         "",
         f"Repository: {task.repo or 'unspecified'}",
         f"Base commit: {task.base_commit or 'unspecified'}",
+        "",
+        "## Runner context",
+        "",
+        f"Agent workspace: {workspace_dir}",
+        f"Run artifact directory: {task_dir}",
+        f"Patch artifact path: {patch_path}",
+        "",
+        "Modify files inside the agent workspace only. Do not commit changes; the benchmark runner will collect git diff --binary after you finish.",
         "",
         "## Problem statement",
         "",

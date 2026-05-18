@@ -75,6 +75,34 @@ class BenchmarkRunnerTests(unittest.TestCase):
             self.assertIn("fixed.txt", (Path(summary.results[0].patch_path or "")).read_text(encoding="utf-8"))
             self.assertEqual(summary.results[0].workspace_dir, str(workspace))
 
+    def test_daat_locus_send_adapter_sends_prompt_on_stdin(self) -> None:
+        command = [
+            sys.executable,
+            "-c",
+            (
+                "import pathlib, sys; "
+                "prompt = sys.stdin.read(); "
+                "pathlib.Path('agent.txt').write_text(prompt); "
+                "print('reply')"
+            ),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = BenchmarkRunner(
+                suite="local-smoke",
+                output_dir=Path(tmp),
+                use_daat_locus_send=True,
+                daat_locus_binary=sys.executable,
+            )
+            with mock.patch.object(runner, "_agent_command", return_value=command):
+                summary = runner.run([BenchmarkTask(id="task-send", problem_statement="fix via send")])
+
+            self.assertEqual(summary.passed, 1)
+            task_dir = Path(summary.results[0].run_dir)
+            sent_prompt = (task_dir / "agent.txt").read_text(encoding="utf-8")
+            self.assertIn("# Benchmark task: task-send", sent_prompt)
+            self.assertIn("fix via send", sent_prompt)
+            self.assertEqual((task_dir / "stdout.txt").read_text(encoding="utf-8").strip(), "reply")
+
 
 def _git(args: list[str], *, cwd: Path) -> None:
     import subprocess

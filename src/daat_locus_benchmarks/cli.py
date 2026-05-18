@@ -36,6 +36,16 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--predictions-path", type=Path, help="Write official SWE-bench predictions JSONL here.")
     run_parser.add_argument("--model-name", default="daat-locus", help="model_name_or_path value for predictions JSONL.")
     run_parser.add_argument(
+        "--use-daat-locus-send",
+        action="store_true",
+        help="Use the built-in Daat Locus adapter: daat-locus send --raw, with prompt text sent on stdin.",
+    )
+    run_parser.add_argument(
+        "--daat-locus-binary",
+        default="daat-locus",
+        help="Daat Locus CLI binary used by --use-daat-locus-send.",
+    )
+    run_parser.add_argument(
         "--agent-command",
         help=(
             "Command executed once per task with DAAT_BENCHMARK_* environment variables. "
@@ -79,8 +89,11 @@ def _print_suites() -> None:
 
 
 def _run(args: argparse.Namespace) -> int:
-    if not args.dry_run and not args.agent_command:
-        print("error: --agent-command is required unless --dry-run is set", file=sys.stderr)
+    if args.agent_command and args.use_daat_locus_send:
+        print("error: choose either --agent-command or --use-daat-locus-send, not both", file=sys.stderr)
+        return 2
+    if not args.dry_run and not args.agent_command and not args.use_daat_locus_send:
+        print("error: --agent-command or --use-daat-locus-send is required unless --dry-run is set", file=sys.stderr)
         return 2
 
     try:
@@ -100,6 +113,8 @@ def _run(args: argparse.Namespace) -> int:
         repo_cache=args.repo_cache,
         predictions_path=args.predictions_path,
         model_name=args.model_name,
+        use_daat_locus_send=args.use_daat_locus_send,
+        daat_locus_binary=args.daat_locus_binary,
     )
     summary = runner.run(tasks)
     _print_summary(summary)
